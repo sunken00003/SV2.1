@@ -1,29 +1,71 @@
 "use strict";
+/**
+ * sc2.js — مقطع Preview من SoundCloud
+ * ════════════════════════════════════════════════════
+ * الإصلاحات:
+ *   - استخدام `which ffmpeg` للعثور على ffmpeg النظام بدل ffmpeg-static
+ *   - fallback لـ /usr/bin/ffmpeg إن فشل which
+ *   - التحقق من حجم الـ raw stream قبل التحويل
+ *   - timeout صريح على pipe
+ * ════════════════════════════════════════════════════
+ */
 
-const play        = require("play-dl");
-const axios       = require("axios");
-const fs          = require("fs-extra");
-const os          = require("os");
-const path        = require("path");
-const { execFile } = require("child_process");
-const { promisify } = require("util");
-const ffmpegPath   = require("ffmpeg-static");
+const play          = require("play-dl");
+const axios         = require("axios");
+const fs            = require("fs-extra");
+const os            = require("os");
+const path          = require("path");
+const { execFile, exec } = require("child_process");
+const { promisify }      = require("util");
+
 const execFileAsync = promisify(execFile);
+const execAsync     = promisify(exec);
 
-// ─── تهيئة play-dl ─────────────────────────────────────────────
+// ─── العثور على ffmpeg النظام ─────────────────────────────────
+let _ffmpegPath = null;
+
+async function getFfmpegPath() {
+  if (_ffmpegPath) return _ffmpegPath;
+
+  // 1. جرب which
+  try {
+    const { stdout } = await execAsync("which ffmpeg");
+    const p = stdout.trim();
+    if (p) { _ffmpegPath = p; return p; }
+  } catch (_) {}
+
+  // 2. مسارات شائعة
+  const candidates = [
+    "/usr/bin/ffmpeg",
+    "/usr/local/bin/ffmpeg",
+    "/opt/homebrew/bin/ffmpeg",
+  ];
+  for (const p of candidates) {
+    if (await fs.pathExists(p)) { _ffmpegPath = p; return p; }
+  }
+
+  throw new Error(
+    "ffmpeg غير مثبت على هذا السيرفر\n" +
+    "أضف buildCommand في Render: apt-get install -y ffmpeg"
+  );
+}
+
+// ─── تهيئة play-dl ────────────────────────────────────────────
 let _initialized = false;
 async function ensureInit() {
   if (_initialized) return;
   try {
     const clientID = await play.getFreeClientID();
     await play.setToken({ soundcloud: { client_id: clientID } });
-  } catch {
+    console.log("[sc2] ✅ SoundCloud client_id:", clientID?.substring(0, 8) + "...");
+  } catch (e) {
+    console.warn("[sc2] getFreeClientID فشل، استخدام auto:", e.message);
     await play.setToken({ soundcloud: { client_id: "auto" } });
   }
   _initialized = true;
 }
 
-// ─── ستيكرز الرقص ──────────────────────────────────────────────
+// ─── ستيكرز الرقص ────────────────────────────────────────────
 const STICKERS_DIR  = path.join(__dirname, "..", "assets", "dance_stickers");
 const SUPPORTED_EXT = new Set([".gif", ".png", ".webp"]);
 let _stickerCache   = null;
@@ -45,67 +87,114 @@ async function sendDanceSticker(api, threadID) {
   const chosen = files[Math.floor(Math.random() * files.length)];
   try {
     await new Promise((res, rej) =>
-      api.sendMessage({ attachment: fs.createReadStream(chosen) }, threadID,
-        err => err ? rej(err) : res())
+      api.sendMessage(
+        { attachment: fs.createReadStream(chosen) },
+        threadID,
+        err => err ? rej(err) : res()
+      )
     );
   } catch (_) {}
 }
 
-// ─── تحويل الصوت الخام → mp3 عبر ffmpeg-static ─────────────────
+// ─── تحويل raw → mp3 باستخدام ffmpeg النظام ─────────────────
 async function toMp3(inputPath, outputPath) {
-  await execFileAsync(ffmpegPath, [
+  const ffmpeg = await getFfmpegPath();
+  console.log(`[sc2] ffmpeg: ${ffmpeg}`);
+
+  await execFileAsync(ffmpeg, [
     "-y",
-    "-i", inputPath,
+    "-i",  inputPath,
     "-vn",
     "-ar", "44100",
     "-ac", "2",
     "-b:a", "128k",
-    "-f", "mp3",
-    outputPath
-  ], { timeout: 60000 });
+    "-f",  "mp3",
+    outputPath,
+  ], { timeout: 90000 });
 }
 
-// ─── البحث والتحميل ────────────────────────────────────────────
+// ─── حفظ stream مع timeout ────────────────────────────────────
+function pipeWithTimeout(readable, writePath, timeoutMs = 60000) {
+  return new Promise((res, rej) => {
+    const out = fs.createWriteStream(writePath);
+
+    const timer = setTimeout(() => {
+      try { readable.destroy(); } catch (_) {}
+      try { out.destroy();      } catch (_) {}
+      rej(new Error("انتهت مهلة تحميل الصوت (60ث)"));
+    }, timeoutMs);
+
+    out.on("finish", () => { clearTimeout(timer); res(); });
+    out.on("error",  e  => { clearTimeout(timer); rej(e); });
+    readable.on("error", e => { clearTimeout(timer); rej(e); });
+    readable.pipe(out);
+  });
+}
+
+// ─── البحث والتحميل ──────────────────────────────────────────
 async function searchAndDownload(query) {
   await ensureInit();
 
+  // 1. بحث
   const results = await play.search(query, {
     source: { soundcloud: "tracks" },
-    limit: 1,
+    limit: 3,
   });
   if (!results?.length) throw new Error("لم تُوجد نتائج على SoundCloud");
 
   const track = results[0];
+  console.log(`[sc2] وُجدت: ${track.name} | ${track.url}`);
 
+  // 2. جلب stream
+  let streamData;
+  try {
+    streamData = await play.stream(track.url, { quality: 0 });
+  } catch (e) {
+    throw new Error(`فشل جلب stream: ${e.message}`);
+  }
+
+  if (!streamData?.stream) throw new Error("stream فارغ من play-dl");
+
+  // 3. حفظ الـ raw stream
   const rawPath = path.join(os.tmpdir(), `sc2_raw_${Date.now()}`);
   const mp3Path = path.join(os.tmpdir(), `sc2_${Date.now()}.mp3`);
 
-  // جلب stream من play-dl (HLS أو Opus أو أي صيغة)
-  const streamData = await play.stream(track.url, { quality: 0 });
+  await pipeWithTimeout(streamData.stream, rawPath, 60000);
 
-  // حفظ الـ raw stream كما هو
-  await new Promise((res, rej) => {
-    const timeout = setTimeout(() => {
-      try { streamData.stream.destroy(); } catch (_) {}
-      rej(new Error("انتهت مهلة التحميل"));
-    }, 60000);
-
-    const out = fs.createWriteStream(rawPath);
-    streamData.stream.pipe(out);
-    out.on("finish", () => { clearTimeout(timeout); res(); });
-    out.on("error",  e  => { clearTimeout(timeout); rej(e); });
-    streamData.stream.on("error", e => { clearTimeout(timeout); rej(e); });
-  });
-
+  // 4. التحقق من حجم الـ raw قبل التحويل
   const rawStat = await fs.stat(rawPath);
-  if (rawStat.size < 1000) throw new Error("الملف الخام فارغ أو ناقص");
+  console.log(`[sc2] raw size: ${rawStat.size} bytes`);
 
-  // تحويل إلى mp3 حقيقي
-  await toMp3(rawPath, mp3Path);
+  if (rawStat.size < 5000) {
+    await fs.remove(rawPath).catch(() => {});
+    throw new Error(
+      `الملف الخام صغير جداً (${rawStat.size} bytes) — ` +
+      "SoundCloud ربما يحجب الطلب من هذا IP"
+    );
+  }
+
+  // 5. تحويل إلى mp3
+  try {
+    await toMp3(rawPath, mp3Path);
+  } catch (e) {
+    // اقرأ أول 16 byte للتشخيص
+    let magic = "";
+    try {
+      const buf = Buffer.alloc(16);
+      const fd  = await fs.open(rawPath, "r");
+      await fs.read(fd, buf, 0, 16, 0);
+      await fs.close(fd);
+      magic = buf.toString("hex");
+    } catch (_) {}
+    await fs.remove(rawPath).catch(() => {});
+    throw new Error(`فشل تحويل الصوت — magic: ${magic} | ${e.message?.substring(0, 100)}`);
+  }
+
   await fs.remove(rawPath).catch(() => {});
 
+  // 6. التحقق من ملف mp3
   const mp3Stat = await fs.stat(mp3Path);
-  if (mp3Stat.size < 1000) throw new Error("فشل تحويل الصوت إلى mp3");
+  if (mp3Stat.size < 1000) throw new Error("ملف mp3 فارغ بعد التحويل");
 
   return {
     filePath:   mp3Path,
@@ -115,7 +204,7 @@ async function searchAndDownload(query) {
   };
 }
 
-// ─── مساعدات ───────────────────────────────────────────────────
+// ─── مساعدات ─────────────────────────────────────────────────
 function fmtDuration(ms) {
   if (!ms) return "";
   const s = Math.round(ms / 1000), m = Math.floor(s / 60);
@@ -126,24 +215,24 @@ async function cleanTemp(p) {
   try { if (p && await fs.pathExists(p)) await fs.remove(p); } catch (_) {}
 }
 
-// ═══════════════════════════════════════════════════════════════
+// ════════════════════════════════════════════════════════════
 module.exports = {
   config: {
     name:        "sc2",
     aliases:     ["بريفيو2"],
-    version:     "4.0",
+    version:     "5.0",
     role:        0,
     countDown:   10,
     category:    "media",
-    description: "تحميل مقطع Preview من SoundCloud عبر مكتبة play-dl — بديل احتياطي لأمر sc",
-    guide: { en: "{pn} <اسم الأغنية>  —  مقطع preview من SoundCloud عبر play-dl" }
+    description: "مقطع Preview من SoundCloud عبر play-dl + ffmpeg النظام",
+    guide: { en: "{pn} <اسم الأغنية>" },
   },
 
   onStart: async ({ api, message, args, event }) => {
     const { threadID, messageID } = event;
 
     if (!args[0]) return message.reply(
-      "🎵 مقطع Preview من SoundCloud (play-dl)\n\n" +
+      "🎵 مقطع Preview من SoundCloud\n\n" +
       "الاستخدام:\n" +
       ".sc2 <اسم الأغنية>\n\n" +
       "مثال:\n" +
@@ -190,7 +279,7 @@ module.exports = {
         )
       );
 
-      try { if (statusMsgId) api.unsendMessage(statusMsgId, threadID); } catch (_) {}
+      try { if (statusMsgId) api.unsendMessage(statusMsgId, () => {}); } catch (_) {}
       await sendDanceSticker(api, threadID);
 
     } catch (err) {
