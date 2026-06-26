@@ -7,63 +7,15 @@ const path  = require("path");
 
 const BASE = "https://yt-dlp-stream.onrender.com/api";
 
+// 🕺 ستيكرز الرقص أصبحت تُجلب من HF Space (الفضاء الموازي) عبر HTTP
+// بدل تخزينها محلياً في ريبو Sv2 — انظر utlis/danceSticker.js
+const { sendMoodSticker } = require("../utlis/danceSticker.js");
+
 // ─── 7 أزواج إيموجي ────────────────────────────────────────────
 const EMOJI_PAIRS = [
   ["👍", "❤️"], ["😆", "😮"], ["😢", "😡"],
   ["🥰", "👏"], ["🔥", "💯"], ["😍", "😭"], ["🤔", "👀"],
 ];
-
-// ═══════════════════════════════════════════════════════════════
-// 🕺 ستيكرز الرقص — ملفات محلية من مجلد assets/dance_stickers
-// ═══════════════════════════════════════════════════════════════
-//   • ضع ستيكراتك في:  assets/dance_stickers/
-//   • الامتدادات المدعومة:  .gif  .png  .webp
-//   • ملاحظة: GIF المتحركة تُظهر الرقص بشكل أجمل
-// ─────────────────────────────────────────────────────────────
-const STICKERS_DIR = path.join(__dirname, "..", "assets", "dance_stickers");
-const SUPPORTED_EXT = new Set([".gif", ".png", ".webp"]);
-
-let _stickerCache = null;   // يُحمَّل مرة واحدة عند أول استخدام
-
-function getStickerFiles() {
-  if (_stickerCache) return _stickerCache;
-  try {
-    const files = fs.readdirSync(STICKERS_DIR)
-      .filter(f => SUPPORTED_EXT.has(path.extname(f).toLowerCase()))
-      .map(f => path.join(STICKERS_DIR, f));
-    if (files.length === 0) {
-      console.warn("[YT/STICKER] ⚠️  مجلد الستيكرز فارغ:", STICKERS_DIR);
-      return [];
-    }
-    _stickerCache = files;
-    console.log(`[YT/STICKER] ✅ ${files.length} ستيكر جاهز`);
-    return files;
-  } catch (_) {
-    console.warn("[YT/STICKER] ⚠️  المجلد غير موجود — لن يُرسَل ستيكر");
-    return [];
-  }
-}
-
-// ─── اختيار عشوائي وإرسال كـ attachment ────────────────────────
-async function sendDanceSticker(api, threadID) {
-  const files = getStickerFiles();
-  if (files.length === 0) return;
-
-  const chosen = files[Math.floor(Math.random() * files.length)];
-  try {
-    await new Promise((resolve, reject) =>
-      api.sendMessage(
-        { attachment: fs.createReadStream(chosen) },
-        threadID,
-        (err) => err ? reject(err) : resolve()
-      )
-    );
-    console.log(`[YT/STICKER] 🕺 أُرسل: ${path.basename(chosen)}`);
-  } catch (err) {
-    console.error("[YT/STICKER] فشل إرسال الستيكر:", err.message);
-    // لا نوقف البوت — الستيكر اختياري
-  }
-}
 
 // ═══════════════════════════════════════════════════════════════
 // تحميل الملف على /tmp ثم إرساله كـ ReadStream
@@ -168,7 +120,7 @@ async function downloadAndSend(message, statusMsgId, query, wantMp4, api, thread
     }
 
     // 🕺 ستيكر رقص من المجلد المحلي
-    await sendDanceSticker(api, threadID);
+    await sendMoodSticker(api, threadID, p.title);
 
   } finally {
     await cleanTemp(filePath);

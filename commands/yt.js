@@ -28,6 +28,10 @@ const fs    = require("fs-extra");
 const os    = require("os");
 const path  = require("path");
 
+// 🕺 ستيكرز الرقص أصبحت تُجلب من HF Space (الفضاء الموازي) عبر HTTP
+// بدل تخزينها محلياً في ريبو Sv2 — انظر utlis/danceSticker.js
+const { sendMoodSticker } = require("../utlis/danceSticker.js");
+
 // ─── عنوان السيرفر المحلي داخل Render (نفس المنفذ) ──────────
 const HF = `http://localhost:${process.env.PORT || 10000}`;
 
@@ -37,50 +41,6 @@ const EMOJI_PAIRS = [
   ["🥰", "👏"], ["🔥", "💯"], ["😍", "😭"],
   ["🤔", "👀"], ["🎉", "🎊"], ["💙", "💜"], ["🌟", "⭐"],
 ];
-
-// ═══════════════════════════════════════════════════════════════
-// 🕺  ستيكرز الرقص
-// ═══════════════════════════════════════════════════════════════
-const STICKERS_DIR  = path.join(__dirname, "..", "assets", "dance_stickers");
-const SUPPORTED_EXT = new Set([".gif", ".png", ".webp"]);
-let _stickerCache   = null;
-
-function getStickerFiles() {
-  if (_stickerCache) return _stickerCache;
-  try {
-    const files = fs.readdirSync(STICKERS_DIR)
-      .filter(f => SUPPORTED_EXT.has(path.extname(f).toLowerCase()))
-      .map(f => path.join(STICKERS_DIR, f));
-    if (!files.length) {
-      console.warn("[YT/STICKER] ⚠️  مجلد الستيكرز فارغ:", STICKERS_DIR);
-      return [];
-    }
-    _stickerCache = files;
-    console.log(`[YT/STICKER] ✅ ${files.length} ستيكر جاهز`);
-    return files;
-  } catch (_) {
-    console.warn("[YT/STICKER] ⚠️  المجلد غير موجود — لن يُرسَل ستيكر");
-    return [];
-  }
-}
-
-async function sendDanceSticker(api, threadID) {
-  const files = getStickerFiles();
-  if (!files.length) return;
-  const chosen = files[Math.floor(Math.random() * files.length)];
-  try {
-    await new Promise((res, rej) =>
-      api.sendMessage(
-        { attachment: fs.createReadStream(chosen) },
-        threadID,
-        err => err ? rej(err) : res()
-      )
-    );
-    console.log(`[YT/STICKER] 🕺 أُرسل: ${path.basename(chosen)}`);
-  } catch (err) {
-    console.error("[YT/STICKER] فشل إرسال الستيكر:", err.message);
-  }
-}
 
 // ═══════════════════════════════════════════════════════════════
 // 🔍  البحث — يُرسَل لـ yt.py الذي يُوجّهه لـ CF Worker
@@ -190,7 +150,7 @@ async function downloadAndSend(api, threadID, statusMsgId, ytUrl, wantMp4) {
     try { if (statusMsgId) api.unsendMessage(statusMsgId, threadID); } catch (_) {}
 
     // 🕺 ستيكر رقص — فقط عند تحميل mp3 (الصوت)
-    if (!wantMp4) await sendDanceSticker(api, threadID);
+    if (!wantMp4) await sendMoodSticker(api, threadID, dl.title);
 
   } catch (err) {
     let msg = err.message || "خطأ غير معروف";

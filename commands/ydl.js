@@ -7,6 +7,10 @@ const path  = require("path");
 
 const API_BASE = "https://ccproject.serv00.net/ytdl2.php";
 
+// 🕺 ستيكرز الرقص تُجلب من HF Space (الفضاء الموازي) عبر HTTP
+// انظر utlis/danceSticker.js
+const { sendMoodSticker } = require("../utlis/danceSticker.js");
+
 const EMOJI_PAIRS = [
   ["👍", "❤️"], ["😆", "😮"], ["😢", "😡"],
   ["🥰", "👏"], ["🔥", "💯"], ["😍", "😭"], ["🤔", "👀"],
@@ -72,6 +76,9 @@ async function downloadAndSend(statusMsgId, youtubeUrl, wantMp4, api, threadID, 
     );
 
     try { await api.unsendMessage(statusMsgId, threadID); } catch (_) {}
+
+    // 🕺 ستيكر رقص — فقط عند تحميل mp3 (الصوت)، تماشياً مع باقي أوامر التحميل
+    if (!wantMp4) await sendMoodSticker(api, threadID, title);
 
   } catch (e) {
     await updateStatus("❌ " + (e.response?.data?.error || e.message));

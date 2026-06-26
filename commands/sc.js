@@ -5,6 +5,9 @@ const fs    = require("fs-extra");
 const os    = require("os");
 const path  = require("path");
 
+// 🕺 ستيكرز الرقص تُجلب من HF Space (الفضاء الموازي) عبر HTTP — انظر utlis/danceSticker.js
+const { sendMoodSticker } = require("../utlis/danceSticker.js");
+
 const BROWSER_HEADERS = {
   "User-Agent":
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) " +
@@ -131,35 +134,7 @@ async function searchAndStream(query) {
   };
 }
 
-const STICKERS_DIR  = path.join(__dirname, "..", "assets", "dance_stickers");
-const SUPPORTED_EXT = new Set([".gif", ".png", ".webp"]);
-let _stickerCache   = null;
 
-function getStickerFiles() {
-  if (_stickerCache) return _stickerCache;
-  try {
-    const files = fs.readdirSync(STICKERS_DIR)
-      .filter(f => SUPPORTED_EXT.has(path.extname(f).toLowerCase()))
-      .map(f => path.join(STICKERS_DIR, f));
-    _stickerCache = files.length ? files : [];
-  } catch (_) { _stickerCache = []; }
-  return _stickerCache;
-}
-
-async function sendDanceSticker(api, threadID) {
-  const files = getStickerFiles();
-  if (!files.length) return;
-  const chosen = files[Math.floor(Math.random() * files.length)];
-  try {
-    await new Promise((res, rej) =>
-      api.sendMessage(
-        { attachment: fs.createReadStream(chosen) },
-        threadID,
-        err => err ? rej(err) : res()
-      )
-    );
-  } catch (_) {}
-}
 
 function fmtDuration(ms) {
   if (!ms) return "";
@@ -235,7 +210,7 @@ module.exports = {
       );
 
       try { if (statusMsgId) api.unsendMessage(statusMsgId, threadID); } catch (_) {}
-      await sendDanceSticker(api, threadID);
+      await sendMoodSticker(api, threadID, result.title);
 
     } catch (err) {
       console.error("[sc] خطأ:", err.message);
