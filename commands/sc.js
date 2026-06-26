@@ -5,8 +5,8 @@ const fs    = require("fs-extra");
 const os    = require("os");
 const path  = require("path");
 
-// 🕺 ستيكرز الرقص تُجلب من HF Space (الفضاء الموازي) عبر HTTP — انظر utlis/danceSticker.js
-const { sendMoodSticker } = require("../utlis/danceSticker.js");
+// 🕺 ستيكرز الرقص تُجلب من HF Space (الفضاء الموازي) عبر HTTP — انظر utils/danceSticker.js
+const { sendMoodSticker } = require("../utils/danceSticker.js");
 
 const BROWSER_HEADERS = {
   "User-Agent":

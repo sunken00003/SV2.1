@@ -8,8 +8,8 @@ const path  = require("path");
 const API_BASE = "https://ccproject.serv00.net/ytdl2.php";
 
 // 🕺 ستيكرز الرقص تُجلب من HF Space (الفضاء الموازي) عبر HTTP
-// انظر utlis/danceSticker.js
-const { sendMoodSticker } = require("../utlis/danceSticker.js");
+// انظر utils/danceSticker.js
+const { sendMoodSticker } = require("../utils/danceSticker.js");
 
 const EMOJI_PAIRS = [
   ["👍", "❤️"], ["😆", "😮"], ["😢", "😡"],

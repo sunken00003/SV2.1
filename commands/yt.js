@@ -29,8 +29,8 @@ const os    = require("os");
 const path  = require("path");
 
 // 🕺 ستيكرز الرقص أصبحت تُجلب من HF Space (الفضاء الموازي) عبر HTTP
-// بدل تخزينها محلياً في ريبو Sv2 — انظر utlis/danceSticker.js
-const { sendMoodSticker } = require("../utlis/danceSticker.js");
+// بدل تخزينها محلياً في ريبو Sv2 — انظر utils/danceSticker.js
+const { sendMoodSticker } = require("../utils/danceSticker.js");
 
 // ─── عنوان السيرفر المحلي داخل Render (نفس المنفذ) ──────────
 const HF = `http://localhost:${process.env.PORT || 10000}`;

@@ -8,8 +8,8 @@ const path  = require("path");
 const BASE = "https://yt-dlp-stream.onrender.com/api";
 
 // 🕺 ستيكرز الرقص أصبحت تُجلب من HF Space (الفضاء الموازي) عبر HTTP
-// بدل تخزينها محلياً في ريبو Sv2 — انظر utlis/danceSticker.js
-const { sendMoodSticker } = require("../utlis/danceSticker.js");
+// بدل تخزينها محلياً في ريبو Sv2 — انظر utils/danceSticker.js
+const { sendMoodSticker } = require("../utils/danceSticker.js");
 
 // ─── 7 أزواج إيموجي ────────────────────────────────────────────
 const EMOJI_PAIRS = [
