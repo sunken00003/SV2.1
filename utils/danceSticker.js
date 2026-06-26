@@ -59,9 +59,14 @@ async function sendMoodSticker(api, threadID, title) {
     const buffer = Buffer.from(res.data);
     if (!buffer.length) return;
 
+    const contentType = res.headers["content-type"] || "image/gif";
+    const ext =
+      contentType.includes("png")  ? "png"  :
+      contentType.includes("webp") ? "webp" : "gif";
+
     await new Promise((resolve, reject) =>
       api.sendMessage(
-        { attachment: bufferToStream(buffer) },
+        { attachment: bufferToStream(buffer, ext) },
         threadID,
         (err) => (err ? reject(err) : resolve())
       )
@@ -79,10 +84,19 @@ async function sendMoodSticker(api, threadID, title) {
 /**
  * يحوّل Buffer إلى Readable stream متوافق مع ما تتوقعه fca (api.sendMessage)
  * بدون الحاجة لكتابة الملف على القرص (/tmp) أصلاً.
+ *
+ * ⚠️ مهم: معظم تطبيقات fca (fca-unofficial وما شابهها) تعتمد على
+ * خاصية `.path` الموجودة على الـ stream (كما يحدث تلقائياً مع
+ * fs.createReadStream("اسم.gif")) لتحديد امتداد/نوع المرفق المُرسَل
+ * لفيسبوك. بدون هذه الخاصية يُرسَل الملف بدون امتداد، فيعرضه
+ * ماسنجر كملف عام بدل صورة متحركة. لذلك نضيف `path` وهمياً صريحاً
+ * ينتهي بالامتداد الصحيح.
  */
-function bufferToStream(buffer) {
+function bufferToStream(buffer, ext = "gif") {
   const { Readable } = require("stream");
-  return Readable.from(buffer);
+  const stream = Readable.from(buffer);
+  stream.path = `sticker_${Date.now()}.${ext}`;
+  return stream;
 }
 
 module.exports = { sendMoodSticker };
