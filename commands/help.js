@@ -10,7 +10,7 @@ const CATEGORY_MERGE = {
   ],
   "الوسائط والتحميل": [
     "media", "وسائط", "download", "تحميل",
-    "yt", "ydl", "yt2", "sc", "sing",
+    "yt", "ydl", "yt2", "sc", "sc2", "sing",
     "img", "tts", "pinterest", "random"
   ],
   "الألعاب والترفيه": [

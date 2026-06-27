@@ -1,43 +1,39 @@
 const axios = require('axios');
-const fs = require('fs-extra');
-const path = require('path');
-const os = require('os');
+const fs    = require('fs-extra');
+const path  = require('path');
+const os    = require('os');
 
-// ─── إدارة الجلسات ───────────────────────────────────────────
 if (!global.soundcloudSearchSessions) global.soundcloudSearchSessions = {};
 if (!global.__singCleanupRegistered) {
     global.__singCleanupRegistered = true;
     setInterval(() => {
         const now = Date.now();
-        for (const uid in global.soundcloudSearchSessions) {
+        for (const uid in global.soundcloudSearchSessions)
             if (now - global.soundcloudSearchSessions[uid].timestamp > 120000)
                 delete global.soundcloudSearchSessions[uid];
-        }
     }, 60000);
 }
 
 function getApiKey() {
-    const keys = [
-        process.env.FERDEV_API_KEY,
-        process.env.FERDEV_API_KEY2,
-        process.env.FERDEV_API_KEY3
-    ].filter(Boolean);
+    const keys = [process.env.FERDEV_API_KEY, process.env.FERDEV_API_KEY2, process.env.FERDEV_API_KEY3].filter(Boolean);
     return keys.length === 0 ? "FREE" : keys[Math.floor(Math.random() * keys.length)];
 }
 
-// Render لا يسمح بالكتابة إلا في /tmp — os.tmpdir() يعمل محلياً وعلى Render
 function getTempPath(senderID) {
     return path.join(os.tmpdir(), `sing_${Date.now()}_${senderID}.mp3`);
+}
+
+function react(api, msgID, emoji) {
+    try { api.setMessageReaction(emoji, msgID, () => {}, true); } catch (_) {}
 }
 
 module.exports = {
     config: {
         name: "sing",
-        version: "4.5.0",
-        author: "SunkenBot Developer",
+        version: "4.6.0",
         countDown: 5,
         role: 0,
-        description: "بحث وتحميل أغاني كاملة من SoundCloud عبر API ferdev — يعرض قائمة نتائج للاختيار منها",
+        description: "بحث وتحميل أغاني من SoundCloud — يعرض قائمة نتائج للاختيار",
         category: "media",
         guides: "sing [اسم الأغنية]"
     },
@@ -51,22 +47,12 @@ module.exports = {
         const TRIGGERS = ['sing ', 'mp3 ', 'song ', 'اغنية ', 'أغنية '];
         const trigger  = TRIGGERS.find(t => lower.startsWith(t));
 
-        // ─── 1️⃣ البحث ───────────────────────────────────────────
+        // ─── 1️⃣ البحث ────────────────────────────────────────────
         if (trigger) {
             const songName = trimmed.slice(trigger.length).trim();
             if (!songName) return message.reply("❌ مثال: sing shape of you");
 
-            let statusMsgId = null;
-            try {
-                const sent = await new Promise((resolve, reject) =>
-                    api.sendMessage("🔍 جاري البحث في SoundCloud...", threadID, (err, info) => err ? reject(err) : resolve(info), messageID)
-                );
-                statusMsgId = sent?.messageID;
-            } catch (_) {}
-
-            const updateStatus = async (text) => {
-                try { if (statusMsgId) await api.editMessage(text, statusMsgId); } catch (_) {}
-            };
+            react(api, messageID, "🤖");
 
             try {
                 const res = await axios.get('https://api.ferdev.my.id/search/soundcloud', {
@@ -75,7 +61,10 @@ module.exports = {
                 });
 
                 const items = res.data?.result || [];
-                if (items.length === 0) return updateStatus("❌ لم يتم العثور على نتائج.");
+                if (items.length === 0) {
+                    react(api, messageID, "❌");
+                    return api.sendMessage("❌ لم يتم العثور على نتائج.", threadID, null, messageID);
+                }
 
                 const resultsArray = [];
                 let msg = "🎵 نتائج البحث:\n─────────────────\n";
@@ -84,35 +73,34 @@ module.exports = {
                     const title = track.title || `أغنية ${resultsArray.length + 1}`;
                     const url   = track.url || track.permalink_url || track.link;
                     if (url) {
-                        resultsArray.push({ title, url });
+                        resultsArray.push({ title, url, originMsgID: messageID });
                         msg += `${resultsArray.length}. 📝 ${title}\n─────────────────\n`;
                     }
                 });
 
-                if (resultsArray.length === 0)
-                    return updateStatus("❌ فشل استخراج الروابط من نتائج البحث.");
+                if (resultsArray.length === 0) {
+                    react(api, messageID, "❌");
+                    return api.sendMessage("❌ فشل استخراج الروابط.", threadID, null, messageID);
+                }
 
                 global.soundcloudSearchSessions[senderID] = {
-                    results:   resultsArray,
-                    timestamp: Date.now(),
-                    statusMsgId,
+                    results: resultsArray, timestamp: Date.now(), originMsgID: messageID,
                 };
 
                 msg += `🔢 أرسل رقم الأغنية (1-${resultsArray.length}) للتحميل.\n⏳ تنتهي بعد دقيقتين.`;
-                return updateStatus(msg);
+                api.sendMessage(msg, threadID, null, messageID);
+                react(api, messageID, "✅");
 
             } catch (error) {
-                console.error("[SING] Search error:", error.message);
+                react(api, messageID, "❌");
                 if (error.code === 'ECONNABORTED' || error.message.includes('timeout'))
-                    return updateStatus("❌ انتهت مهلة البحث، حاول مرة أخرى.");
-                return updateStatus("❌ خطأ أثناء البحث.");
+                    return api.sendMessage("❌ انتهت مهلة البحث، حاول مرة أخرى.", threadID, null, messageID);
+                api.sendMessage("❌ خطأ أثناء البحث.", threadID, null, messageID);
             }
+            return;
         }
 
-        // ─── 2️⃣ التحميل ─────────────────────────────────────────
-        // نتحقق أولاً من وجود جلسة بحث نشطة لهذا المستخدم تحديدًا قبل
-        // تطبيق فحص /^\d+$/ — هذا يقلّل احتمال تعارض onChat هذا مع أمر
-        // آخر يستخدم onChat برسائل أرقام مشابهة من مستخدمين بلا جلسة.
+        // ─── 2️⃣ التحميل ──────────────────────────────────────────
         const session = global.soundcloudSearchSessions[senderID];
         if (session && /^\d+$/.test(lower)) {
             if (Date.now() - session.timestamp > 120000) {
@@ -125,16 +113,10 @@ module.exports = {
                 return message.reply(`❌ اختر رقماً من 1 إلى ${session.results.length}`);
 
             const chosenTrack = session.results[index];
-            const statusMsgId = session.statusMsgId;
+            const originMsgID = session.originMsgID;
             delete global.soundcloudSearchSessions[senderID];
 
-            const updateStatus = async (text) => {
-                try { if (statusMsgId) await api.editMessage(text, statusMsgId); } catch (_) {}
-            };
-
-            await updateStatus(`📥 جاري تحميل: ${chosenTrack.title}`);
-
-            // ✅ /tmp بدل cache/sing — متوافق مع Render ephemeral filesystem
+            react(api, originMsgID, "🤖");
             const filePath = getTempPath(senderID);
 
             try {
@@ -150,58 +132,36 @@ module.exports = {
                 if (!downloadUrl) throw new Error("لم يُرجع الـ API رابط تحميل.");
 
                 const streamRes = await axios({
-                    url: downloadUrl,
-                    method: 'GET',
-                    responseType: 'arraybuffer',
-                    timeout: 90000,
-                    maxContentLength: 26214400,  // 25MB
-                    maxBodyLength: 26214400,     // ✅ مطلوب في axios v1+
+                    url: downloadUrl, method: 'GET', responseType: 'arraybuffer',
+                    timeout: 90000, maxContentLength: 26214400, maxBodyLength: 26214400,
                 });
 
                 const buffer = Buffer.from(streamRes.data);
-
-                if (buffer.length === 0) throw new Error("الملف فارغ.");
-                if (buffer.length > 26214400)
-                    return updateStatus("⚠️ الملف أكبر من 25MB، لا يمكن إرساله عبر ماسنجر.");
+                if (!buffer.length)           throw new Error("الملف فارغ.");
+                if (buffer.length > 26214400) throw new Error("الملف أكبر من 25MB.");
 
                 await fs.writeFile(filePath, buffer);
+                if ((await fs.stat(filePath)).size === 0) throw new Error("الملف فارغ بعد الحفظ.");
 
-                const stat = await fs.stat(filePath);
-                if (stat.size === 0) throw new Error("الملف فارغ بعد الحفظ.");
-
-                // أرسل الملف كمرفق، ثم احذف رسالة الحالة المؤقتة
-                await new Promise((resolve, reject) => {
+                await new Promise((resolve, reject) =>
                     api.sendMessage(
-                        {
-                            body:       `✅ ${chosenTrack.title}`,
-                            attachment: fs.createReadStream(filePath)
-                        },
-                        threadID,
-                        (err) => err ? reject(err) : resolve(),
-                        messageID
-                    );
-                });
+                        { body: `🎵 ${chosenTrack.title}`, attachment: fs.createReadStream(filePath) },
+                        threadID, err => err ? reject(err) : resolve(), messageID
+                    )
+                );
 
-                if (statusMsgId) {
-                    try { await api.unsendMessage(statusMsgId, threadID); } catch (_) {}
-                }
+                react(api, originMsgID, "✅");
 
             } catch (error) {
-                console.error("[SING] error:", error.message);
+                react(api, originMsgID, "❌");
                 let msg;
-                if (error.message.includes("25MB"))
-                    msg = "⚠️ الملف أكبر من 25MB.";
-                else if (error.code === 'ECONNABORTED' || error.message.includes('timeout'))
-                    msg = "❌ انتهت مهلة التحميل، الأغنية قد تكون طويلة جداً.";
-                else if (error.message.includes("لم يُرجع"))
-                    msg = "❌ فشل الـ API في إرجاع رابط التحميل، حاول أغنية أخرى.";
-                else
-                    msg = "❌ فشل التحميل أو الإرسال. قد يكون المحتوى محمياً.";
-                await updateStatus(msg);
+                if (error.message.includes("25MB"))       msg = "⚠️ الملف أكبر من 25MB.";
+                else if (error.code === 'ECONNABORTED')   msg = "❌ انتهت مهلة التحميل.";
+                else if (error.message.includes("يُرجع")) msg = "❌ فشل الـ API في إرجاع رابط التحميل.";
+                else                                       msg = "❌ فشل التحميل، قد يكون المحتوى محمياً.";
+                api.sendMessage(msg, threadID, null, messageID);
             } finally {
-                try {
-                    if (await fs.pathExists(filePath)) await fs.remove(filePath);
-                } catch (_) {}
+                try { if (await fs.pathExists(filePath)) await fs.remove(filePath); } catch (_) {}
             }
         }
     }
