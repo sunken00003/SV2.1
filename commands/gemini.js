@@ -3,8 +3,9 @@ const mongoose = require("mongoose");
 
 const HF_BASE = process.env.HF_SPACE_URL || "";
 
+// ─── Schema للجلسات ──────────────────────────────────────────
 const sessionSchema = new mongoose.Schema({
-  _id:      String,
+  _id:     String,
   messages: { type: Array, default: [] },
   updatedAt: { type: Date, default: Date.now },
 });
@@ -21,13 +22,24 @@ async function loadCtx(id) {
 async function saveCtx(id, messages) {
   try {
     if (!global.db) return;
-    await Session.findByIdAndUpdate(id, { messages: messages.slice(-20), updatedAt: new Date() }, { upsert: true });
+    await Session.findByIdAndUpdate(
+      id,
+      { messages: messages.slice(-20), updatedAt: new Date() },
+      { upsert: true }
+    );
   } catch (_) {}
 }
 
+// ─── تعقيم اسم المستخدم قبل حقنه في محتوى الذكاء الاصطناعي ────
 function sanitizeName(name) {
   if (!name) return "مستخدم";
-  return String(name).replace(/[\u0000-\u001F\u007F]/g,"").replace(/[[\]{}<>`]/g,"").replace(/\s+/g," ").trim().slice(0,40) || "مستخدم";
+  const clean = String(name)
+    .replace(/[\u0000-\u001F\u007F]/g, "")
+    .replace(/[[\]{}<>`]/g, "")
+    .replace(/\s+/g, " ")
+    .trim()
+    .slice(0, 40);
+  return clean || "مستخدم";
 }
 
 async function callHF(endpoint, messages) {
@@ -41,15 +53,12 @@ async function callHF(endpoint, messages) {
   return data.reply;
 }
 
-function react(api, msgID, emoji) {
-  try { api.setMessageReaction(emoji, msgID, () => {}, true); } catch (_) {}
-}
-
 async function handle(api, event, prompt, registerReply) {
+  // ✅ الجلسة الجماعية: threadID بدل senderID
   const { threadID, messageID, senderID } = event;
   const sessionKey = threadID;
 
-  if (["clear","مسح","reset"].includes(prompt.trim().toLowerCase())) {
+  if (prompt.trim().toLowerCase() === "clear" || prompt.trim() === "مسح") {
     try { await Session.findByIdAndDelete(sessionKey); } catch (_) {}
     return api.sendMessage("🧹 تم مسح ذاكرة المجموعة.", threadID, null, messageID);
   }
@@ -61,9 +70,7 @@ async function handle(api, event, prompt, registerReply) {
     );
   }
 
-  // 🤖 تفاعل "جاري المعالجة"
-  react(api, messageID, "🤖");
-
+  // ✅ جلب اسم المرسل
   let senderDisplayName = senderID;
   try {
     const userInfo = await new Promise((res, rej) =>
@@ -73,32 +80,33 @@ async function handle(api, event, prompt, registerReply) {
   } catch (_) {}
   senderDisplayName = sanitizeName(senderDisplayName);
 
-  const ctx         = await loadCtx(sessionKey);
+  const ctx = await loadCtx(sessionKey);
   const userContent = `[${senderDisplayName}]: ${prompt.trim()}`;
+
+  const messages = [
+    ...ctx,
+    { role: "user", content: userContent },
+  ];
 
   let reply;
   try {
-    reply = await callHF("gemini", [...ctx, { role: "user", content: userContent }]);
+    reply = await callHF("gemini", messages);
   } catch (e) {
-    react(api, messageID, "❌");
+    console.error("[GEMINI→HF]", e.response?.status, e.message?.substring(0, 60));
     const msg = e.message?.includes("HF_SPACE_URL")
       ? "❌ HF_SPACE_URL غير مضبوط في متغيرات البيئة."
       : "❌ الخادم غير متاح حالياً، حاول لاحقاً.";
     return api.sendMessage(msg, threadID, null, messageID);
   }
 
-  // إرسال الرد مباشرة
-  const sent = await new Promise((res, rej) =>
-    api.sendMessage(reply, threadID, (err, info) => err ? rej(err) : res(info), messageID)
-  ).catch(() => null);
-
-  react(api, messageID, "✅");
-
-  if (sent?.messageID && registerReply) {
-    registerReply(sent.messageID, { author: senderID }, async ({ api, event }) => {
-      await handle(api, event, event.body?.trim() || "", registerReply);
-    });
-  }
+  api.sendMessage(reply, threadID, (err, info) => {
+    if (err || !info) return;
+    if (registerReply) {
+      registerReply(info.messageID, { author: senderID }, async ({ api, event }) => {
+        await handle(api, event, event.body?.trim() || "", registerReply);
+      });
+    }
+  }, messageID);
 
   await saveCtx(sessionKey, [
     ...ctx,
@@ -111,17 +119,20 @@ module.exports = {
   config: {
     name: "gemini",
     aliases: ["بوت", "ai", "gm"],
-    version: "9.1.0",
+    version: "9.0.0",
+    author: "Sunken",
     countDown: 5,
     role: 0,
     shortDescription: { ar: "محادثة ذكية جماعية — Gemini + MongoDB" },
     category: "ذكاء اصطناعي",
     guide: { ar: "{pn}gemini [سؤال]\n{pn}gemini مسح" },
   },
+
   onStart: async ({ api, event, args, message }) => {
     const prompt = args.join(" ").trim() || event.messageReply?.body || "";
     await handle(api, event, prompt, message?.registerReply);
   },
+
   onReply: async ({ api, event, message }) => {
     await handle(api, event, event.body?.trim() || "", message?.registerReply);
   },

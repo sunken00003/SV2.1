@@ -136,7 +136,7 @@ async function handleMessage(api, event, message, prompt) {
 
   if (!prompt && !imageData) return message.reply("⚠️ اكتب سؤالاً أو ردّ على صورة.");
 
-  setReaction(api, "🤖", messageID, threadID);
+  setReaction(api, "⏳", messageID, threadID);
   const context = await loadSession(threadID);
 
   // ✅ نضيف اسم المرسل للرسالة
@@ -160,7 +160,7 @@ async function handleMessage(api, event, message, prompt) {
 
   if (!reply) { setReaction(api, "❌", messageID, threadID); return message.reply("❌ استجابة فارغة."); }
 
-  setReaction(api, "✅", messageID, threadID);
+  setReaction(api, "🟢", messageID, threadID);
   const info = await message.reply(reply);
   message.registerReply(info.messageID, { threadID }, async ({ api, event, message }) => {
     const replyPrompt = event.body?.trim() || "";

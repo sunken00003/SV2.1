@@ -284,7 +284,8 @@ module.exports = {
         "📝 الاستخدام:\n  .novel [اسم الرواية] [رقم الفصل]\n\n" +
         "💡 أمثلة:\n" +
         "  .novel martial peak 1\n" +
-        "  .novel solo leveling 100\n\n" +
+        "  .novel solo leveling 100\n" +
+        "  .novel kingdom's bloodline 627\n\n" +
         "🌐 المصادر:\n" +
         "  ① WTR-Lab ② MtlNovel ③ NovelHall ④ AllNovelFull ⑤ NovelFull\n\n" +
         "🔄 الترجمة تلقائية للعربية",
@@ -299,18 +300,32 @@ module.exports = {
         threadID, null, messageID
       );
     }
-
     const chapterNum = parseInt(lastArg);
     const novelName  = args.slice(0, -1).join(" ");
 
-    // 🤖 تفاعل "جاري المعالجة"
-    try { api.setMessageReaction("🤖", messageID, () => {}, true); } catch (_) {}
+    let statusMsgId = null;
+    try {
+      const sent = await new Promise((resolve, reject) =>
+        api.sendMessage(
+          `⏳ جاري جلب الفصل...\n📖 ${novelName}\n📄 الفصل ${chapterNum}\n\n⚠️ قد يستغرق 30-90 ثانية`,
+          threadID,
+          (err, info) => err ? reject(err) : resolve(info),
+          messageID
+        )
+      );
+      statusMsgId = sent?.messageID;
+    } catch (_) {}
+
+    const updateStatus = async (text) => {
+      try { if (statusMsgId) await api.editMessage(text, statusMsgId); } catch (_) {}
+    };
 
     let result = null;
 
     // أولاً: WTR-Lab
     if (HF_SCRAPER_URL) {
       try {
+        await updateStatus(`🔍 WTR-Lab...\n📖 ${novelName}\n📄 الفصل ${chapterNum}`);
         result = await fetchFromWTRLab(novelName, chapterNum);
         console.log(`[NOVEL] ✅ WTR-Lab نجح`);
       } catch (err) {
@@ -322,6 +337,7 @@ module.exports = {
     if (!result) {
       for (const site of FALLBACK_SITES) {
         try {
+          await updateStatus(`🔍 ${site.name}...\n📖 ${novelName}\n📄 الفصل ${chapterNum}`);
           result = await fetchFromFallback(site, novelName, chapterNum);
           console.log(`[NOVEL] ✅ ${site.name} نجح`);
           break;
@@ -333,29 +349,34 @@ module.exports = {
     }
 
     if (!result) {
-      try { api.setMessageReaction("❌", messageID, () => {}, true); } catch (_) {}
-      return api.sendMessage(
-        `❌ لم أجد الفصل في أي مصدر\n\n📖 ${novelName}\n📄 الفصل ${chapterNum}\n\n` +
-        `💡 تأكد من:\n• الاسم الإنجليزي الصحيح\n• رقم الفصل صحيح`,
-        threadID, null, messageID
-      );
+      const errMsg =
+        `❌ لم أجد الفصل في أي مصدر\n\n` +
+        `📖 ${novelName}\n📄 الفصل ${chapterNum}\n\n` +
+        `💡 تأكد من:\n• الاسم الإنجليزي الصحيح\n• رقم الفصل صحيح`;
+      try {
+        if (statusMsgId) await api.editMessage(errMsg, statusMsgId);
+        else api.sendMessage(errMsg, threadID, null, messageID);
+      } catch (_) { api.sendMessage(errMsg, threadID, null, messageID); }
+      return;
     }
 
+    await updateStatus(`🔄 ترجمة ${result.paragraphs.length} فقرة...\n📖 ${result.title}\n🌐 ${result.siteName}`);
     const translated = await translateBatch(result.paragraphs);
 
-    const divider      = "─".repeat(35);
+    const divider = "─".repeat(35);
     const chapterLabel = result.chapterTitle || `الفصل ${chapterNum}`;
-    const header       = `📖 ${result.title}\n📄 ${chapterLabel}\n🌐 ${result.siteName}\n${divider}\n\n`;
-    const fullText     = header + translated.join("\n\n");
-    const chunks       = splitMessage(fullText);
+    const header = `📖 ${result.title}\n📄 ${chapterLabel}\n🌐 ${result.siteName}\n${divider}\n\n`;
+    const fullText = header + translated.join("\n\n");
+    const chunks = splitMessage(fullText);
 
     for (let i = 0; i < chunks.length; i++) {
       const suffix = chunks.length > 1 ? `\n\n${divider}\n📌 ${i + 1} / ${chunks.length}` : "";
-      const body   = chunks[i] + suffix;
-      await new Promise(r => setTimeout(r, i === 0 ? 0 : 800));
+      const body = chunks[i] + suffix;
+      if (i === 0 && statusMsgId) {
+        try { await api.editMessage(body, statusMsgId); continue; } catch (_) {}
+      }
+      await new Promise(r => setTimeout(r, 800));
       api.sendMessage(body, threadID, null, messageID);
     }
-
-    try { api.setMessageReaction("✅", messageID, () => {}, true); } catch (_) {}
   }
 };
