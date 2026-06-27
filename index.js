@@ -251,6 +251,25 @@ const handleMessage = async (api, event) => {
   global.setCooldown(senderID, commandName, cd);
 
   // ─── Execute ──────────────────────────────────────────────
+  // ════════════════════════════════════════════════════════
+  //  🤖 نظام التفاعل الموحّد — Router Level
+  //
+  //  • أي أمر يُنفَّذ   → 🤖 فوراً على رسالة المستخدم
+  //  • أوامر لها react خاص (yt, tts, gemini, groq...)
+  //    → تُعيد ✅/❌ بأنفسها، الـ router لا يتدخل
+  //  • أوامر بسيطة (help, uid, gid, quran...)
+  //    → الـ router يضع ✅ تلقائياً بعد اكتمال التنفيذ
+  //  • أي خطأ غير متوقع
+  //    → الـ router يضع ❌ تلقائياً
+  // ════════════════════════════════════════════════════════
+
+  // كشف تلقائي: هل الأمر يستدعي setMessageReaction بنفسه؟
+  const _cmdFn = command.onStart || command.run || command.execute;
+  const _cmdHasOwnReact = !!(_cmdFn?.toString().includes("setMessageReaction"));
+
+  // 🤖 على رسالة المستخدم دائماً قبل التنفيذ
+  try { api.setMessageReaction("🤖", messageID, () => {}, true); } catch (_) {}
+
   try {
     const ctx = {
       api, event, args,
@@ -261,10 +280,16 @@ const handleMessage = async (api, event) => {
     if      (command.onStart) await command.onStart(ctx);
     else if (command.run)     await command.run(ctx);
     else if (command.execute) await command.execute(api, event, args, global.commands, "", global.config.admins, global.appState, t => api.sendMessage(t, threadID, null, messageID), global.usersData, global.globalData);
+
+    // ✅ تلقائي فقط للأوامر التي لا تملك نظام تفاعل خاص بها
+    if (!_cmdHasOwnReact) {
+      try { api.setMessageReaction("✅", messageID, () => {}, true); } catch (_) {}
+    }
   } catch (err) {
-    // رسالة عامة للمستخدم فقط — التفاصيل الكاملة (قد تحتوي مسارات أو
-    // بنية الكود الداخلية) تبقى في console فقط، لا تُسرَّب للشات.
+    // رسالة عامة للمستخدم فقط — التفاصيل تبقى في console
     console.error(`[CMD ERR] ${commandName}:`, err);
+    // ❌ عند أي خطأ غير متوقع
+    try { api.setMessageReaction("❌", messageID, () => {}, true); } catch (_) {}
     api.sendMessage("❌ حدث خطأ غير متوقع أثناء تنفيذ هذا الأمر", threadID, null, messageID);
   }
 };
